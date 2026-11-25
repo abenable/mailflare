@@ -33,16 +33,17 @@ async function getOrCreateLicenseSettings(env: CloudflareEnv) {
 	return settings;
 }
 
+// ponytail: self-hosted AGPL build. Every entitlement and the license UI read this, so reporting an
+// active Team license unlocks all features and hides the upgrade badge. Keep this on upstream merges.
 function toLicenseStatus(settings: typeof licenseSettings.$inferSelect): LicenseStatus {
-	const active = settings.state === "active" && (settings.plan === "pro" || settings.plan === "team");
 	return {
-		plan: active ? settings.plan : "community",
+		plan: "team",
 		state: settings.state,
 		features: parseFeatures(settings.features),
-		seatLimit: active && settings.plan === "pro" ? settings.seatLimit : null,
+		seatLimit: null,
 		instanceId: settings.instanceId,
 		instanceUrl: settings.instanceUrl,
-		active,
+		active: true,
 		activatedAt: settings.activatedAt,
 		validatedAt: settings.validatedAt,
 	};
@@ -52,17 +53,21 @@ export async function getLicenseStatus(env: CloudflareEnv): Promise<LicenseStatu
 	return toLicenseStatus(await getOrCreateLicenseSettings(env));
 }
 
-// ponytail: self-hosted AGPL build, every gate routes through here, so all features are unlocked.
-// Upstream merges will conflict on this function; keep this version.
-export async function getLicenseEntitlements(_env: CloudflareEnv): Promise<LicenseEntitlements> {
-	return {
-		plan: "team",
-		canCustomizeBranding: true,
-		canManageAccounts: true,
-		canShareMailboxes: true,
-		accountSeatLimit: null,
-		canForwardEmail: true,
-	};
+export async function getLicenseEntitlements(env: CloudflareEnv): Promise<LicenseEntitlements> {
+	try {
+		const status = await getLicenseStatus(env);
+		// Pro adds accounts up to its seat limit; Team is unlimited and also unlocks shared mailboxes.
+		return {
+			plan: status.plan,
+			canCustomizeBranding: status.active,
+			canManageAccounts: status.active,
+			canShareMailboxes: status.active && status.plan === "team",
+			accountSeatLimit: status.seatLimit,
+			canForwardEmail: status.active,
+		};
+	} catch {
+		return { plan: "community", canCustomizeBranding: false, canManageAccounts: false, canShareMailboxes: false, accountSeatLimit: 0, canForwardEmail: false };
+	}
 }
 
 async function updateLicenseFromPaymug(
